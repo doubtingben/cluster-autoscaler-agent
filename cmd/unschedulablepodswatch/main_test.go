@@ -138,3 +138,36 @@ func TestMapsEqual(t *testing.T) {
 		})
 	}
 }
+
+func TestWatchNamespaceLabel(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		want      string
+	}{
+		{
+			name:      "NamespaceAll",
+			namespace: metav1.NamespaceAll,
+			want:      "all",
+		},
+		{
+			name:      "specific namespace",
+			namespace: "default",
+			want:      "default",
+		},
+		{
+			name:      "another namespace",
+			namespace: "kube-system",
+			want:      "kube-system",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := watchNamespaceLabel(tt.namespace)
+			if got != tt.want {
+				t.Errorf("watchNamespaceLabel(%q) = %q, want %q", tt.namespace, got, tt.want)
+			}
+		})
+	}
+}
