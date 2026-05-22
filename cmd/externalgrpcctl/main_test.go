@@ -1,8 +1,8 @@
 package main
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"testing"
@@ -13,9 +13,9 @@ import (
 
 func TestBuildCall(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		wantErr    bool
+		name    string
+		args    []string
+		wantErr bool
 	}{
 		{name: "list", args: []string{"list-nodegroups"}},
 		{name: "template", args: []string{"template", "--nodegroup", "ng-1"}},

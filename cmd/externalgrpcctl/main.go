@@ -80,7 +80,7 @@ func main() {
 		fatal(err)
 	}
 
-	cc, err := grpc.DialContext(ctx, cfg.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpc.NewClient(cfg.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		fatal(err)
 	}
