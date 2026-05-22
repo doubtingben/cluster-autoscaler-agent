@@ -143,3 +143,34 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	return string(out)
 }
+
+func TestMultiFlag(t *testing.T) {
+	var m multiFlag
+
+	if m.String() != "" {
+		t.Fatalf("expected empty string, got: %q", m.String())
+	}
+
+	if err := m.Set("val1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if m.String() != "val1" {
+		t.Fatalf("expected \"val1\", got: %q", m.String())
+	}
+
+	if err := m.Set("val2"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if m.String() != "val1,val2" {
+		t.Fatalf("expected \"val1,val2\", got: %q", m.String())
+	}
+
+	if len(m) != 2 {
+		t.Fatalf("expected length 2, got: %d", len(m))
+	}
+	if m[0] != "val1" || m[1] != "val2" {
+		t.Fatalf("expected [val1 val2], got: %v", m)
+	}
+}
