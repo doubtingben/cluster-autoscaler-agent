@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -23,6 +25,7 @@ type config struct {
 	address string
 	timeout time.Duration
 	headers multiFlag
+	tls     bool
 }
 
 type rpcCall struct {
@@ -58,6 +61,7 @@ func main() {
 	flag.StringVar(&cfg.address, "addr", "127.0.0.1:8086", "gRPC provider address")
 	flag.DurationVar(&cfg.timeout, "timeout", 10*time.Second, "request timeout")
 	flag.Var(&cfg.headers, "H", "metadata header key:value (repeatable)")
+	flag.BoolVar(&cfg.tls, "tls", false, "use TLS to connect to the provider")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -80,7 +84,14 @@ func main() {
 		fatal(err)
 	}
 
-	cc, err := grpc.NewClient(cfg.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var creds credentials.TransportCredentials
+	if cfg.tls {
+		creds = credentials.NewTLS(&tls.Config{})
+	} else {
+		creds = insecure.NewCredentials()
+	}
+
+	cc, err := grpc.NewClient(cfg.address, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		fatal(err)
 	}
