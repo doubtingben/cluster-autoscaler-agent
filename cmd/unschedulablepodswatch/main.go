@@ -43,6 +43,75 @@ type podEvent struct {
 	Pod       unschedulableSnapshot `json:"pod"`
 }
 
+type podEventHandler struct {
+	state map[types.UID]unschedulableSnapshot
+}
+
+func newPodEventHandler() *podEventHandler {
+	return &podEventHandler{
+		state: make(map[types.UID]unschedulableSnapshot),
+	}
+}
+
+func (h *podEventHandler) onAdd(obj any) {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return
+	}
+	snap, ok := unschedulableSnapshotForPod(pod)
+	if !ok {
+		return
+	}
+	h.state[pod.UID] = snap
+	emit("ADDED", snap)
+}
+
+func (h *podEventHandler) onUpdate(oldObj, newObj any) {
+	pod, ok := newObj.(*corev1.Pod)
+	if !ok {
+		return
+	}
+	snap, isUnschedulable := unschedulableSnapshotForPod(pod)
+	prev, hadPrev := h.state[pod.UID]
+
+	switch {
+	case isUnschedulable && !hadPrev:
+		h.state[pod.UID] = snap
+		emit("ADDED", snap)
+	case isUnschedulable && hadPrev && !snapEqual(prev, snap):
+		h.state[pod.UID] = snap
+		emit("MODIFIED", snap)
+	case !isUnschedulable && hadPrev:
+		delete(h.state, pod.UID)
+		emit("DELETED", prev)
+	}
+}
+
+func (h *podEventHandler) onDelete(obj any) {
+	pod, ok := extractPod(obj)
+	if !ok {
+		return
+	}
+	prev, hadPrev := h.state[pod.UID]
+	if !hadPrev {
+		return
+	}
+	delete(h.state, pod.UID)
+	emit("DELETED", prev)
+}
+
+func createInformer(clientset kubernetes.Interface, namespace string) (informers.SharedInformerFactory, cache.SharedIndexInformer) {
+	factory := informers.NewSharedInformerFactoryWithOptions(
+		clientset,
+		0,
+		informers.WithNamespace(namespace),
+		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+			opts.FieldSelector = fields.OneTermEqualSelector("status.phase", string(corev1.PodPending)).String()
+		}),
+	)
+	return factory, factory.Core().V1().Pods().Informer()
+}
+
 func main() {
 	cfg := config{}
 	flag.StringVar(&cfg.kubeconfig, "kubeconfig", "", "path to kubeconfig file; defaults to in-cluster or standard kubeconfig loading")
@@ -68,62 +137,13 @@ func main() {
 
 	logf("connecting to Kubernetes API")
 
-	factory := informers.NewSharedInformerFactoryWithOptions(
-		clientset,
-		0,
-		informers.WithNamespace(cfg.namespace),
-		informers.WithTweakListOptions(func(opts *metav1.ListOptions) {
-			opts.FieldSelector = fields.OneTermEqualSelector("status.phase", string(corev1.PodPending)).String()
-		}),
-	)
-	informer := factory.Core().V1().Pods().Informer()
+	factory, informer := createInformer(clientset, cfg.namespace)
 
-	state := map[types.UID]unschedulableSnapshot{}
+	handler := newPodEventHandler()
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj any) {
-			pod, ok := obj.(*corev1.Pod)
-			if !ok {
-				return
-			}
-			snap, ok := unschedulableSnapshotForPod(pod)
-			if !ok {
-				return
-			}
-			state[pod.UID] = snap
-			emit("ADDED", snap)
-		},
-		UpdateFunc: func(oldObj, newObj any) {
-			pod, ok := newObj.(*corev1.Pod)
-			if !ok {
-				return
-			}
-			snap, isUnschedulable := unschedulableSnapshotForPod(pod)
-			prev, hadPrev := state[pod.UID]
-
-			switch {
-			case isUnschedulable && !hadPrev:
-				state[pod.UID] = snap
-				emit("ADDED", snap)
-			case isUnschedulable && hadPrev && !snapEqual(prev, snap):
-				state[pod.UID] = snap
-				emit("MODIFIED", snap)
-			case !isUnschedulable && hadPrev:
-				delete(state, pod.UID)
-				emit("DELETED", prev)
-			}
-		},
-		DeleteFunc: func(obj any) {
-			pod, ok := extractPod(obj)
-			if !ok {
-				return
-			}
-			prev, hadPrev := state[pod.UID]
-			if !hadPrev {
-				return
-			}
-			delete(state, pod.UID)
-			emit("DELETED", prev)
-		},
+		AddFunc:    handler.onAdd,
+		UpdateFunc: handler.onUpdate,
+		DeleteFunc: handler.onDelete,
 	})
 	if err != nil {
 		fatal(err)
