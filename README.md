@@ -30,6 +30,24 @@ go run ./cmd/externalgrpcctl --addr 127.0.0.1:8086 node-delete --nodegroup ng-1 
 
 Optional headers are supported with repeated `-H key:value` flags.
 
+## Second tool: `unschedulablepodswatch`
+
+`unschedulablepodswatch` connects to the Kubernetes API, watches pending pods, filters to the same scheduler signal Cluster Autoscaler keys off (`PodScheduled=False` with reason `Unschedulable`), and prints JSON events to stdout.
+
+### Usage
+
+```bash
+go run ./cmd/unschedulablepodswatch
+go run ./cmd/unschedulablepodswatch --namespace kube-system
+go run ./cmd/unschedulablepodswatch --kubeconfig ~/.kube/config --context my-cluster
+```
+
+Event stream shape:
+
+```json
+{"eventType":"ADDED","pod":{"namespace":"default","name":"demo","uid":"...","schedulerName":"default-scheduler","reason":"Unschedulable","message":"0/3 nodes are available","createdAt":"2026-05-22T12:00:00Z"}}
+```
+
 ## Nix dev environment
 
 A `flake.nix` is included for reproducible tooling.
