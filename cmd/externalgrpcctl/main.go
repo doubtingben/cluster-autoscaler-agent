@@ -10,19 +10,36 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fullstorydev/grpcurl"
-	"github.com/jhump/protoreflect/grpcreflect"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider/externalgrpc/protos"
 )
-
-const externalProviderService = "clusterautoscaler.ExternalGrpcProvider"
 
 type config struct {
 	address string
 	timeout time.Duration
 	headers multiFlag
+}
+
+type rpcCall struct {
+	run func(context.Context, protos.CloudProviderClient) (any, error)
+}
+
+type nodeGroupSummary struct {
+	ID          string `json:"id"`
+	MinSize     int32  `json:"minSize"`
+	MaxSize     int32  `json:"maxSize"`
+	CurrentSize int    `json:"currentSize"`
+	DesiredSize int32  `json:"desiredSize"`
+	Debug       string `json:"debug"`
+}
+
+type listNodeGroupsResponse struct {
+	NodeGroups []nodeGroupSummary `json:"nodeGroups"`
 }
 
 type multiFlag []string
@@ -38,7 +55,7 @@ func (m *multiFlag) Set(v string) error {
 
 func main() {
 	cfg := config{}
-	flag.StringVar(&cfg.address, "addr", "127.0.0.1:5200", "gRPC provider address")
+	flag.StringVar(&cfg.address, "addr", "127.0.0.1:8086", "gRPC provider address")
 	flag.DurationVar(&cfg.timeout, "timeout", 10*time.Second, "request timeout")
 	flag.Var(&cfg.headers, "H", "metadata header key:value (repeatable)")
 	flag.Usage = usage
@@ -50,7 +67,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	svc, method, reqBody, err := buildCall(args)
+	call, err := buildCall(args)
 	if err != nil {
 		fatal(err)
 	}
@@ -69,11 +86,12 @@ func main() {
 	}
 	defer cc.Close()
 
-	rc := grpcreflect.NewClientAuto(ctx, cc)
-	defer rc.Reset()
-
-	desc := grpcurl.DescriptorSourceFromServer(ctx, rc)
-	if err := invoke(ctx, cc, desc, svc+"."+method, reqBody); err != nil {
+	client := protos.NewCloudProviderClient(cc)
+	resp, err := call.run(ctx, client)
+	if err != nil {
+		fatal(err)
+	}
+	if err := printResponse(resp); err != nil {
 		fatal(err)
 	}
 }
@@ -89,57 +107,139 @@ Commands:
   template --nodegroup <id>
   node-info --nodegroup <id>
   scale-up --nodegroup <id> --delta <n>
-  scale-down --nodegroup <id> --delta <n>
+  node-delete --nodegroup <id> --node <name> [--node <name> ...]
+  node-delete --nodegroup <id> --provider-id <id> [--provider-id <id> ...]
 
 Global flags:
 `)
 	flag.PrintDefaults()
 }
 
-func buildCall(args []string) (service string, method string, reqBody string, err error) {
+func buildCall(args []string) (rpcCall, error) {
 	if len(args) == 0 {
-		return "", "", "", errors.New("missing command")
+		return rpcCall{}, errors.New("missing command")
 	}
 
 	switch args[0] {
 	case "list-nodegroups":
-		return externalProviderService, "NodeGroups", `{}`, nil
+		return rpcCall{
+			run: func(ctx context.Context, client protos.CloudProviderClient) (any, error) {
+				resp, err := client.NodeGroups(ctx, &protos.NodeGroupsRequest{})
+				if err != nil {
+					return nil, err
+				}
+
+				summaries := make([]nodeGroupSummary, 0, len(resp.GetNodeGroups()))
+				for _, ng := range resp.GetNodeGroups() {
+					targetResp, err := client.NodeGroupTargetSize(ctx, &protos.NodeGroupTargetSizeRequest{Id: ng.GetId()})
+					if err != nil {
+						return nil, fmt.Errorf("nodegroup %q target size: %w", ng.GetId(), err)
+					}
+					nodesResp, err := client.NodeGroupNodes(ctx, &protos.NodeGroupNodesRequest{Id: ng.GetId()})
+					if err != nil {
+						return nil, fmt.Errorf("nodegroup %q current nodes: %w", ng.GetId(), err)
+					}
+
+					summaries = append(summaries, nodeGroupSummary{
+						ID:          ng.GetId(),
+						MinSize:     ng.GetMinSize(),
+						MaxSize:     ng.GetMaxSize(),
+						CurrentSize: len(nodesResp.GetInstances()),
+						DesiredSize: targetResp.GetTargetSize(),
+						Debug:       ng.GetDebug(),
+					})
+				}
+
+				return listNodeGroupsResponse{NodeGroups: summaries}, nil
+			},
+		}, nil
 	case "template":
 		fs := newFlagSet("template")
 		nodegroup := fs.String("nodegroup", "", "nodegroup ID")
 		if err := fs.Parse(args[1:]); err != nil {
-			return "", "", "", err
+			return rpcCall{}, err
 		}
 		if strings.TrimSpace(*nodegroup) == "" {
-			return "", "", "", errors.New("template requires --nodegroup")
+			return rpcCall{}, errors.New("template requires --nodegroup")
 		}
-		return externalProviderService, "NodeGroupTemplateNodeInfo", marshal(map[string]any{"id": *nodegroup}), nil
+		return rpcCall{
+			run: func(ctx context.Context, client protos.CloudProviderClient) (any, error) {
+				return client.NodeGroupTemplateNodeInfo(ctx, &protos.NodeGroupTemplateNodeInfoRequest{Id: *nodegroup})
+			},
+		}, nil
 	case "node-info":
 		fs := newFlagSet("node-info")
 		nodegroup := fs.String("nodegroup", "", "nodegroup ID")
 		if err := fs.Parse(args[1:]); err != nil {
-			return "", "", "", err
+			return rpcCall{}, err
 		}
 		if strings.TrimSpace(*nodegroup) == "" {
-			return "", "", "", errors.New("node-info requires --nodegroup")
+			return rpcCall{}, errors.New("node-info requires --nodegroup")
 		}
-		return externalProviderService, "NodeGroupNodes", marshal(map[string]any{"id": *nodegroup}), nil
-	case "scale-up", "scale-down":
+		return rpcCall{
+			run: func(ctx context.Context, client protos.CloudProviderClient) (any, error) {
+				return client.NodeGroupNodes(ctx, &protos.NodeGroupNodesRequest{Id: *nodegroup})
+			},
+		}, nil
+	case "scale-up":
 		fs := newFlagSet(args[0])
 		nodegroup := fs.String("nodegroup", "", "nodegroup ID")
 		delta := fs.Int("delta", 0, "change in target size")
 		if err := fs.Parse(args[1:]); err != nil {
-			return "", "", "", err
+			return rpcCall{}, err
 		}
 		if strings.TrimSpace(*nodegroup) == "" || *delta <= 0 {
-			return "", "", "", fmt.Errorf("%s requires --nodegroup and --delta > 0", args[0])
+			return rpcCall{}, fmt.Errorf("%s requires --nodegroup and --delta > 0", args[0])
 		}
-		if args[0] == "scale-down" {
-			return externalProviderService, "DecreaseTargetSize", marshal(map[string]any{"id": *nodegroup, "delta": -*delta}), nil
+		return rpcCall{
+			run: func(ctx context.Context, client protos.CloudProviderClient) (any, error) {
+				return client.NodeGroupIncreaseSize(ctx, &protos.NodeGroupIncreaseSizeRequest{
+					Id:    *nodegroup,
+					Delta: int32(*delta),
+				})
+			},
+		}, nil
+	case "node-delete":
+		fs := newFlagSet("node-delete")
+		nodegroup := fs.String("nodegroup", "", "nodegroup ID")
+		var nodeNames multiFlag
+		var providerIDs multiFlag
+		fs.Var(&nodeNames, "node", "Kubernetes node name to delete (repeatable)")
+		fs.Var(&providerIDs, "provider-id", "cloud provider node ID to delete (repeatable)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return rpcCall{}, err
 		}
-		return externalProviderService, "IncreaseSize", marshal(map[string]any{"id": *nodegroup, "delta": *delta}), nil
+		if strings.TrimSpace(*nodegroup) == "" {
+			return rpcCall{}, errors.New("node-delete requires --nodegroup")
+		}
+		nodes := make([]*protos.ExternalGrpcNode, 0, len(nodeNames)+len(providerIDs))
+		for _, name := range nodeNames {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return rpcCall{}, errors.New("node-delete received empty --node value")
+			}
+			nodes = append(nodes, &protos.ExternalGrpcNode{Name: name})
+		}
+		for _, providerID := range providerIDs {
+			providerID = strings.TrimSpace(providerID)
+			if providerID == "" {
+				return rpcCall{}, errors.New("node-delete received empty --provider-id value")
+			}
+			nodes = append(nodes, &protos.ExternalGrpcNode{ProviderID: providerID})
+		}
+		if len(nodes) == 0 {
+			return rpcCall{}, errors.New("node-delete requires at least one --node or --provider-id")
+		}
+		return rpcCall{
+			run: func(ctx context.Context, client protos.CloudProviderClient) (any, error) {
+				return client.NodeGroupDeleteNodes(ctx, &protos.NodeGroupDeleteNodesRequest{
+					Id:    *nodegroup,
+					Nodes: nodes,
+				})
+			},
+		}, nil
 	default:
-		return "", "", "", fmt.Errorf("unknown command %q", args[0])
+		return rpcCall{}, fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
@@ -147,11 +247,6 @@ func newFlagSet(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	return fs
-}
-
-func marshal(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }
 
 func withOutgoingHeaders(ctx context.Context, headers []string) (context.Context, error) {
@@ -174,13 +269,43 @@ func withOutgoingHeaders(ctx context.Context, headers []string) (context.Context
 	return metadata.NewOutgoingContext(ctx, md), nil
 }
 
-func invoke(ctx context.Context, cc *grpc.ClientConn, src grpcurl.DescriptorSource, method string, reqBody string) error {
-	parser, formatter, err := grpcurl.RequestParserAndFormatter(grpcurl.FormatJSON, src, strings.NewReader(reqBody), grpcurl.FormatOptions{})
+func printResponse(v any) error {
+	if templateResp, ok := v.(*protos.NodeGroupTemplateNodeInfoResponse); ok {
+		return printTemplateNode(templateResp)
+	}
+	if msg, ok := v.(proto.Message); ok {
+		out, err := protojson.MarshalOptions{
+			Multiline:       true,
+			Indent:          "  ",
+			EmitUnpopulated: true,
+		}.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(os.Stdout, string(out))
+		return err
+	}
+
+	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	h := grpcurl.NewDefaultEventHandler(os.Stdout, src, formatter, false)
-	return grpcurl.InvokeRPC(ctx, src, cc, method, nil, h, parser.Next)
+	_, err = fmt.Fprintln(os.Stdout, string(out))
+	return err
+}
+
+func printTemplateNode(resp *protos.NodeGroupTemplateNodeInfoResponse) error {
+	node := &corev1.Node{}
+	if err := node.Unmarshal(resp.GetNodeBytes()); err != nil {
+		return fmt.Errorf("decode template nodeBytes: %w", err)
+	}
+
+	out, err := json.MarshalIndent(node, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, string(out))
+	return err
 }
 
 func fatal(err error) {
