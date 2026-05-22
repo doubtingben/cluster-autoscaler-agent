@@ -77,3 +77,64 @@ func TestUnschedulableSnapshotForPodIgnoresScheduledOrNonMatchingPods(t *testing
 		}
 	}
 }
+
+func TestMapsEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a    map[string]string
+		b    map[string]string
+		want bool
+	}{
+		{
+			name: "both nil",
+			a:    nil,
+			b:    nil,
+			want: true,
+		},
+		{
+			name: "one nil, one empty",
+			a:    nil,
+			b:    map[string]string{},
+			want: true,
+		},
+		{
+			name: "both empty",
+			a:    map[string]string{},
+			b:    map[string]string{},
+			want: true,
+		},
+		{
+			name: "different lengths",
+			a:    map[string]string{"k1": "v1"},
+			b:    map[string]string{},
+			want: false,
+		},
+		{
+			name: "same lengths, different keys",
+			a:    map[string]string{"k1": "v1"},
+			b:    map[string]string{"k2": "v1"},
+			want: false,
+		},
+		{
+			name: "same lengths, same keys, different values",
+			a:    map[string]string{"k1": "v1"},
+			b:    map[string]string{"k1": "v2"},
+			want: false,
+		},
+		{
+			name: "equal maps",
+			a:    map[string]string{"k1": "v1", "k2": "v2"},
+			b:    map[string]string{"k1": "v1", "k2": "v2"},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mapsEqual(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("mapsEqual() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
