@@ -1,0 +1,4 @@
+## 2026-05-23 - [Integer Overflow Vulnerability in Flag Parsing]
+**Vulnerability:** Integer overflow conversion from int to int32 in `externalgrpcctl/main.go` when processing the `--delta` flag.
+**Learning:** `flag.Int` returns a pointer to an `int` (which is 64-bit on most architectures). Directly casting this to `int32` without bounds checking can lead to integer overflow if the input exceeds `math.MaxInt32` (2,147,483,647), potentially causing unexpected behavior in downstream logic (like a massive scale-down instead of scale-up if it wraps to a negative number). This is a CWE-190 vulnerability flagged by gosec.
+**Prevention:** Always validate that values fit within the bounds of the target integer type before downcasting. For example, check `if val > math.MaxInt32` before casting an `int` to `int32`.
