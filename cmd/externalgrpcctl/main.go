@@ -204,13 +204,13 @@ func buildCall(args []string) (rpcCall, error) {
 			return rpcCall{}, fmt.Errorf("%s requires --nodegroup and --delta > 0", args[0])
 		}
 		if *delta > math.MaxInt32 {
-			return rpcCall{}, fmt.Errorf("%s --delta exceeds maximum allowed value", args[0])
+			return rpcCall{}, fmt.Errorf("%s --delta exceeds maximum allowed value (math.MaxInt32)", args[0])
 		}
 		return rpcCall{
 			run: func(ctx context.Context, client protos.CloudProviderClient) (any, error) {
 				return client.NodeGroupIncreaseSize(ctx, &protos.NodeGroupIncreaseSizeRequest{
 					Id:    *nodegroup,
-					Delta: int32(*delta), // #nosec G115 -- bounds checked above
+					Delta: int32(*delta), // #nosec G115 -- bounded by math.MaxInt32 check above
 				})
 			},
 		}, nil
