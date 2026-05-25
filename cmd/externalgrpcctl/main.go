@@ -87,7 +87,9 @@ func main() {
 
 	var creds credentials.TransportCredentials
 	if cfg.tls {
-		creds = credentials.NewTLS(&tls.Config{})
+		creds = credentials.NewTLS(&tls.Config{
+			MinVersion: tls.VersionTLS12,
+		})
 	} else {
 		creds = insecure.NewCredentials()
 	}
