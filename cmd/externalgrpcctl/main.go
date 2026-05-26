@@ -87,7 +87,10 @@ func main() {
 
 	var creds credentials.TransportCredentials
 	if cfg.tls {
-		creds = credentials.NewTLS(&tls.Config{})
+		// SECURITY: Enforce minimum TLS version 1.2 to prevent downgrade attacks
+		creds = credentials.NewTLS(&tls.Config{
+			MinVersion: tls.VersionTLS12,
+		})
 	} else {
 		creds = insecure.NewCredentials()
 	}
@@ -272,12 +275,14 @@ func withOutgoingHeaders(ctx context.Context, headers []string) (context.Context
 	for _, h := range headers {
 		parts := strings.SplitN(h, ":", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid header %q, expected key:value", h)
+			// SECURITY: Do not log the raw header value to prevent leaking malformed secrets
+			return nil, errors.New("invalid header format, expected key:value")
 		}
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
 		if key == "" {
-			return nil, fmt.Errorf("invalid header %q, empty key", h)
+			// SECURITY: Do not log the raw header value to prevent leaking secrets
+			return nil, errors.New("invalid header format, empty key")
 		}
 		md.Append(key, value)
 	}

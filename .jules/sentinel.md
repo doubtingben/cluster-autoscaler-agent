@@ -6,3 +6,7 @@
 **Vulnerability:** Integer overflow conversion from int to int32 in `externalgrpcctl/main.go` when processing the `--delta` flag.
 **Learning:** `flag.Int` returns a pointer to an `int` (which is 64-bit on most architectures). Directly casting this to `int32` without bounds checking can lead to integer overflow if the input exceeds `math.MaxInt32` (2,147,483,647), potentially causing unexpected behavior in downstream logic (like a massive scale-down instead of scale-up if it wraps to a negative number). This is a CWE-190 vulnerability flagged by gosec.
 **Prevention:** Always validate that values fit within the bounds of the target integer type before downcasting. For example, check `if val > math.MaxInt32` before casting an `int` to `int32`.
+## 2026-05-26 - Prevent sensitive data leakage in header parsing errors
+**Vulnerability:** The `externalgrpcctl` CLI logs the full value of malformed HTTP headers in its error output. If a user accidentally omits the colon separator while providing a sensitive token (e.g., `-H "Authorization Bearer secret"`), the CLI prints the secret to stderr.
+**Learning:** Error messages that echo back raw user input, especially for fields designed to carry authentication tokens or secrets, can lead to inadvertent credential leakage in CI/CD logs or terminal histories.
+**Prevention:** Always sanitize error messages that handle potentially sensitive user input. Avoid echoing back the exact payload when parsing authentication headers, tokens, or credentials fails.
