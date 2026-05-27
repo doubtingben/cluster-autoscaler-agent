@@ -272,12 +272,15 @@ func withOutgoingHeaders(ctx context.Context, headers []string) (context.Context
 	for _, h := range headers {
 		parts := strings.SplitN(h, ":", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid header %q, expected key:value", h)
+			// SECURITY: Return a generic error message to avoid logging sensitive data (like tokens)
+			// from a malformed header 'h' that a user might have accidentally provided.
+			return nil, errors.New("invalid header format, expected key:value")
 		}
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
 		if key == "" {
-			return nil, fmt.Errorf("invalid header %q, empty key", h)
+			// SECURITY: Return a generic error message to avoid logging sensitive data.
+			return nil, errors.New("invalid header format, empty key")
 		}
 		md.Append(key, value)
 	}
