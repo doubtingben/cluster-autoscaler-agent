@@ -80,7 +80,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout)
 	defer cancel()
 
-	ctx, err = withOutgoingHeaders(ctx, cfg.headers)
+	ctx, err = withOutgoingHeaders(ctx, cfg.headers, cfg.tls)
 	if err != nil {
 		fatal(err)
 	}
@@ -266,7 +266,7 @@ func newFlagSet(name string) *flag.FlagSet {
 	return fs
 }
 
-func withOutgoingHeaders(ctx context.Context, headers []string) (context.Context, error) {
+func withOutgoingHeaders(ctx context.Context, headers []string, tlsEnabled bool) (context.Context, error) {
 	if len(headers) == 0 {
 		return ctx, nil
 	}
@@ -283,6 +283,11 @@ func withOutgoingHeaders(ctx context.Context, headers []string) (context.Context
 		if key == "" {
 			// SECURITY: Return a generic error message to avoid logging sensitive data.
 			return nil, errors.New("invalid header format, empty key")
+		}
+		keyLower := strings.ToLower(key)
+		if !tlsEnabled && (keyLower == "authorization" || keyLower == "cookie" || strings.Contains(keyLower, "token") || strings.Contains(keyLower, "secret") || strings.Contains(keyLower, "key")) {
+			// SECURITY: Prevent transmitting credentials or sensitive tokens in plaintext
+			return nil, fmt.Errorf("SECURITY: refusing to send sensitive header %q over an unencrypted connection (requires --tls)", key)
 		}
 		md.Append(key, value)
 	}
