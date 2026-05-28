@@ -49,14 +49,27 @@ func TestBuildCall(t *testing.T) {
 func TestWithOutgoingHeaders(t *testing.T) {
 	ctx := context.Background()
 
-	_, err := withOutgoingHeaders(ctx, []string{"bad-header"})
+	_, err := withOutgoingHeaders(ctx, []string{"bad-header"}, false)
 	if err == nil {
 		t.Fatalf("expected parse error")
 	}
 
-	newCtx, err := withOutgoingHeaders(ctx, []string{"x-test:abc", "x-test:def"})
+	newCtx, err := withOutgoingHeaders(ctx, []string{"x-test:abc", "x-test:def"}, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if newCtx == nil {
+		t.Fatalf("expected context")
+	}
+
+	_, err = withOutgoingHeaders(ctx, []string{"Authorization: Bearer 123"}, false)
+	if err == nil {
+		t.Fatalf("expected error when sending sensitive header without tls")
+	}
+
+	newCtx, err = withOutgoingHeaders(ctx, []string{"Authorization: Bearer 123"}, true)
+	if err != nil {
+		t.Fatalf("unexpected error when sending sensitive header with tls: %v", err)
 	}
 	if newCtx == nil {
 		t.Fatalf("expected context")
