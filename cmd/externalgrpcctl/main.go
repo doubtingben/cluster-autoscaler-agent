@@ -285,9 +285,14 @@ func withOutgoingHeaders(ctx context.Context, headers []string, tlsEnabled bool)
 			return nil, errors.New("invalid header format, empty key")
 		}
 		keyLower := strings.ToLower(key)
-		if !tlsEnabled && (keyLower == "authorization" || keyLower == "cookie" || strings.Contains(keyLower, "token") || strings.Contains(keyLower, "secret") || strings.Contains(keyLower, "key")) {
+		if !tlsEnabled && (keyLower == "authorization" || keyLower == "cookie" || strings.Contains(keyLower, "token") || strings.Contains(keyLower, "secret") || strings.Contains(keyLower, "key") || strings.Contains(keyLower, "password") || strings.Contains(keyLower, "credential") || strings.Contains(keyLower, "auth")) {
 			// SECURITY: Prevent transmitting credentials or sensitive tokens in plaintext
 			return nil, fmt.Errorf("SECURITY: refusing to send sensitive header %q over an unencrypted connection (requires --tls)", key)
+		}
+		valueLower := strings.ToLower(value)
+		if !tlsEnabled && (strings.HasPrefix(valueLower, "bearer ") || strings.HasPrefix(valueLower, "ghp_") || strings.HasPrefix(valueLower, "glpat-")) {
+			// SECURITY: Prevent transmitting known token formats in plaintext regardless of header key
+			return nil, fmt.Errorf("SECURITY: refusing to send token-like value in header %q over an unencrypted connection (requires --tls)", key)
 		}
 		md.Append(key, value)
 	}
