@@ -62,17 +62,30 @@ func TestWithOutgoingHeaders(t *testing.T) {
 		t.Fatalf("expected context")
 	}
 
-	_, err = withOutgoingHeaders(ctx, []string{"Authorization: Bearer 123"}, false)
-	if err == nil {
-		t.Fatalf("expected error when sending sensitive header without tls")
+	sensitiveHeaders := []string{
+		"Authorization: Bearer 123",
+		"X-Password: password123",
+		"Cookie: session_id=abc",
+		"API-Credential: my-cred",
+		"X-Session: session_data",
+		"Secret-Token: my-token",
+		"X-Bearer: token",
+		"Passwd: 123",
 	}
 
-	newCtx, err = withOutgoingHeaders(ctx, []string{"Authorization: Bearer 123"}, true)
-	if err != nil {
-		t.Fatalf("unexpected error when sending sensitive header with tls: %v", err)
-	}
-	if newCtx == nil {
-		t.Fatalf("expected context")
+	for _, header := range sensitiveHeaders {
+		_, err = withOutgoingHeaders(ctx, []string{header}, false)
+		if err == nil {
+			t.Fatalf("expected error when sending sensitive header %q without tls", header)
+		}
+
+		newCtx, err = withOutgoingHeaders(ctx, []string{header}, true)
+		if err != nil {
+			t.Fatalf("unexpected error when sending sensitive header %q with tls: %v", header, err)
+		}
+		if newCtx == nil {
+			t.Fatalf("expected context")
+		}
 	}
 }
 
