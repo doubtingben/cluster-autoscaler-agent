@@ -14,3 +14,7 @@
 **Vulnerability:** Found an unencrypted sensitive data transmission vulnerability in `cmd/externalgrpcctl/main.go`. By default, the tool connects to an external gRPC provider using an insecure (plaintext) connection. However, users can pass custom metadata headers via the `-H` flag, including credentials like `Authorization`, `Cookie`, or tokens/secrets. Sending such sensitive tokens over an unencrypted connection could allow them to be intercepted.
 **Learning:** Tools that support transmitting arbitrary user-provided HTTP headers or metadata over a network connection must ensure that sensitive credentials are not accidentally transmitted over plaintext. Users might not realize the connection is unencrypted, or they may mistakenly assume TLS is active by default.
 **Prevention:** Implement checks on the client side before transmission. If a connection is insecure, inspect outgoing headers for common sensitive patterns (e.g., "authorization", "cookie", "token", "secret", "key"). If a sensitive header is detected, reject the transmission proactively with an error asking the user to enable TLS or use an encrypted connection.
+## 2026-06-26 - [Standard Dependency Updates]
+**Vulnerability:** Found known vulnerabilities in golang.org/x/net@v0.51.0.
+**Learning:** These are routine dependency bumps to fix upstream CVEs (GO-2026-5026, GO-2026-4918).
+**Prevention:** Keep dependencies updated using govulncheck.
